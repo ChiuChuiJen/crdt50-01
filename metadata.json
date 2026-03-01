@@ -1,0 +1,5 @@
+{
+  "name": "CR Exchange Simulator",
+  "description": "A virtual cryptocurrency exchange simulator with 100 currencies, random events, and a weighted index.",
+  "requestFramePermissions": []
+}

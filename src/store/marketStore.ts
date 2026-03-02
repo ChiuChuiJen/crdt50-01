@@ -36,9 +36,31 @@ export interface CrdtState {
   change24h: number;
 }
 
+export interface OrderBookItem {
+  price: number;
+  amount: number;
+  total: number;
+}
+
+export interface CricState {
+  price: number;
+  priceHistory: { time: number; price: number }[];
+  dailyHistory: { time: number; price: number }[];
+  dailyHigh: number;
+  dailyLow: number;
+  dailyOpen: number;
+  change24h: number;
+  isOpen: boolean;
+  orderBook: {
+    bids: OrderBookItem[];
+    asks: OrderBookItem[];
+  };
+}
+
 interface MarketStore {
   currencies: CurrencyState[];
   crdt: CrdtState;
+  cric: CricState;
   index: number;
   dailyOpenIndex: number;
   indexDailyHigh: number;
@@ -58,6 +80,7 @@ interface MarketStore {
   toggleRunning: () => void;
   nextTick: () => void;
   nextDay: () => void;
+  getTopConstituents: () => { id: string; name: string; symbol: string; weight: number }[];
 }
 
 const generateDailyHistory = (currentPrice: number, days: number) => {
@@ -72,23 +95,60 @@ const generateDailyHistory = (currentPrice: number, days: number) => {
   return history;
 };
 
+const generateOrderBook = (currentPrice: number): { bids: OrderBookItem[]; asks: OrderBookItem[] } => {
+  const bids: OrderBookItem[] = [];
+  const asks: OrderBookItem[] = [];
+  
+  // Generate 5 bids and 5 asks
+  for (let i = 0; i < 5; i++) {
+    const bidPrice = currentPrice * (1 - (i + 1) * 0.0005 - Math.random() * 0.0005);
+    const askPrice = currentPrice * (1 + (i + 1) * 0.0005 + Math.random() * 0.0005);
+    
+    bids.push({
+      price: bidPrice,
+      amount: Math.floor(Math.random() * 50) + 10,
+      total: 0 // Calculated later if needed, or just visual
+    });
+    
+    asks.push({
+      price: askPrice,
+      amount: Math.floor(Math.random() * 50) + 10,
+      total: 0
+    });
+  }
+  return { bids, asks };
+};
+
+const initializeCric = (): CricState => {
+  const now = Date.now();
+  const initialPrice = 5000;
+  // Start with empty history or just the current point to avoid pre-simulation
+  return {
+    price: initialPrice,
+    priceHistory: [{ time: now, price: initialPrice }],
+    dailyHistory: [{ time: now, price: initialPrice }], // Start fresh
+    dailyHigh: initialPrice,
+    dailyLow: initialPrice,
+    dailyOpen: initialPrice,
+    change24h: 0,
+    isOpen: false,
+    orderBook: generateOrderBook(initialPrice),
+  };
+};
+
 const initializeCurrencies = (): CurrencyState[] => {
   const now = Date.now();
   return initialCurrencies.map(c => {
-    const spotHistory = Array.from({ length: 24 }, (_, i) => ({
-      time: now - (24 - i) * 10 * 60 * 1000,
-      price: c.price * (1 + (Math.random() * 0.02 - 0.01)),
-    }));
-    const futuresHistory = spotHistory.map(h => ({
-      time: h.time,
-      price: h.price * (1 + (Math.random() * 0.004 - 0.002)),
-    }));
+    const spotHistory = [{ time: now, price: c.price }];
+    
+    const futuresPrice = c.price * (1 + (Math.random() * 0.002 - 0.001));
+    const futuresHistory = [{ time: now, price: futuresPrice }];
+
     const spotDaily = generateDailyHistory(c.price, 30);
     const futuresDaily = spotDaily.map(h => ({
       time: h.time,
       price: h.price * (1 + (Math.random() * 0.004 - 0.002)),
     }));
-    const futuresPrice = c.price * (1 + (Math.random() * 0.002 - 0.001));
 
     return {
       ...c,
@@ -121,10 +181,7 @@ const initializeCrdt = (): CrdtState => {
   const now = Date.now();
   return {
     price: 1.0,
-    priceHistory: Array.from({ length: 24 }, (_, i) => ({
-      time: now - (24 - i) * 10 * 60 * 1000,
-      price: 1.0 + (Math.random() * 0.002 - 0.001), // Very stable
-    })),
+    priceHistory: [{ time: now, price: 1.0 }],
     dailyHistory: generateDailyHistory(1.0, 30).map(h => ({...h, price: 1.0 + (Math.random() * 0.004 - 0.002)})),
     dailyHigh: 1.002,
     dailyLow: 0.998,
@@ -133,10 +190,13 @@ const initializeCrdt = (): CrdtState => {
   };
 };
 
-const calculateIndex = (currencies: CurrencyState[], baseIndex: number = 10000) => {
-  const top50 = [...currencies].sort((a, b) => b.volume30d - a.volume30d).slice(0, 50);
+const calculateIndex = (currencies: CurrencyState[], marketFilter: 'general' | 'cric', baseIndex: number = 10000) => {
+  const filtered = currencies.filter(c => c.market === marketFilter);
+  const top50 = [...filtered].sort((a, b) => b.volume30d - a.volume30d).slice(0, 50);
   const totalWeight = top50.reduce((sum, c) => sum + c.volume30d, 0);
   
+  if (totalWeight === 0) return baseIndex;
+
   let indexRatio = 0;
   top50.forEach(c => {
     const weight = c.volume30d / totalWeight;
@@ -152,6 +212,7 @@ const calculateIndex = (currencies: CurrencyState[], baseIndex: number = 10000) 
 export const useMarketStore = create<MarketStore>((set, get) => ({
   currencies: initializeCurrencies(),
   crdt: initializeCrdt(),
+  cric: initializeCric(),
   index: 10000,
   dailyOpenIndex: 10000,
   indexDailyHigh: 10000,
@@ -178,6 +239,11 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
       const newDate = new Date(newTime);
       const isNewDay = oldDate.getDate() !== newDate.getDate();
       
+      // CRIC Logic (09:00 - 15:30)
+      const hours = newDate.getHours();
+      const minutes = newDate.getMinutes();
+      const isCricOpen = (hours > 9 || (hours === 9 && minutes >= 0)) && (hours < 15 || (hours === 15 && minutes <= 30));
+
       const newEvents = [...state.activeEvents];
       if (Math.random() < 0.014) {
         const isGlobal = Math.random() > 0.5;
@@ -193,11 +259,20 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
       }
 
       const newCurrencies = state.currencies.map(c => {
+        // Skip update if it's a CRIC currency and market is closed
+        if (c.market === 'cric' && !isCricOpen) {
+           return {
+             ...c,
+             priceHistory: [...c.priceHistory, { time: newTime, price: c.price }].slice(-144),
+             // Don't update daily history if closed? Or just append same price?
+             // Usually charts show flat line or gap. Let's append same price.
+           };
+        }
+
         let volatility = getVolatilityMultiplier() / 144;
         
         const recentEvent = newEvents[0];
         if (recentEvent && recentEvent.time === newTime && (recentEvent.event.type === 'B' || recentEvent.targetId === c.id)) {
-          // Use the event's impact directly, plus some random variation (80% to 120% of impact)
           const eventEffect = recentEvent.event.impact * (0.8 + Math.random() * 0.4);
           volatility += eventEffect;
         }
@@ -242,10 +317,8 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
       let crdtVolatility = (Math.random() * 0.002 - 0.001); // +/- 0.1% max per tick
       let newCrdtPrice = state.crdt.price * (1 + crdtVolatility);
       
-      // Hard bounds for stablecoin
       if (newCrdtPrice > 1.005) newCrdtPrice = 1.005 - (Math.random() * 0.001);
       if (newCrdtPrice < 0.995) newCrdtPrice = 0.995 + (Math.random() * 0.001);
-      // Soft peg to 1.0
       if (newCrdtPrice > 1.0) newCrdtPrice -= 0.0005;
       if (newCrdtPrice < 1.0) newCrdtPrice += 0.0005;
 
@@ -263,16 +336,42 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
         change24h: isNewDay ? 0 : ((newCrdtPrice - state.crdt.dailyOpen) / state.crdt.dailyOpen) * 100,
       };
 
-      const newIndex = calculateIndex(newCurrencies, 10000);
+      // Calculate Indices
+      const newIndex = calculateIndex(newCurrencies, 'general', 10000);
       const newIndexHistory = [...state.indexHistory, { time: newTime, price: newIndex }];
       if (newIndexHistory.length > 144) newIndexHistory.shift();
       const newDailyOpenIndex = isNewDay ? newIndex : state.dailyOpenIndex;
       const newIndexDailyHistory = isNewDay ? [...state.indexDailyHistory, { time: newTime, price: newIndex }].slice(-30) : state.indexDailyHistory;
 
+      // CRIC Index Calculation
+      // Use 5000 as base for CRIC
+      const newCricPrice = calculateIndex(newCurrencies, 'cric', 5000);
+      const newCricHistory = [...state.cric.priceHistory, { time: newTime, price: newCricPrice }];
+      if (newCricHistory.length > 144) newCricHistory.shift();
+      
+      let newOrderBook = state.cric.orderBook;
+      if (isCricOpen) {
+         newOrderBook = generateOrderBook(newCricPrice);
+      }
+
+      const newCric = {
+        ...state.cric,
+        price: newCricPrice,
+        priceHistory: newCricHistory,
+        dailyHistory: isNewDay ? [...state.cric.dailyHistory, { time: newTime, price: newCricPrice }].slice(-30) : state.cric.dailyHistory,
+        dailyOpen: isNewDay ? newCricPrice : state.cric.dailyOpen,
+        dailyHigh: isNewDay ? newCricPrice : (isCricOpen ? Math.max(state.cric.dailyHigh, newCricPrice) : state.cric.dailyHigh),
+        dailyLow: isNewDay ? newCricPrice : (isCricOpen ? Math.min(state.cric.dailyLow, newCricPrice) : state.cric.dailyLow),
+        change24h: isNewDay ? 0 : ((newCricPrice - state.cric.dailyOpen) / state.cric.dailyOpen) * 100,
+        isOpen: isCricOpen,
+        orderBook: newOrderBook,
+      };
+
       return {
         time: newTime,
         currencies: newCurrencies,
         crdt: newCrdt,
+        cric: newCric,
         activeEvents: newEvents,
         index: newIndex,
         dailyOpenIndex: newDailyOpenIndex,
@@ -293,9 +392,22 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
       const newTime = nextDate.getTime();
       
       const newCurrencies = state.currencies.map(c => {
-        const dailyVol = getVolatilityMultiplier();
-        let newPrice = c.price * (1 + dailyVol);
-        if (newPrice < 0.00000001) newPrice = 0.00000001;
+        // If CRIC closed, price doesn't change overnight? 
+        // Or maybe gap open?
+        // Let's assume day starts with same price for simplicity, or apply volatility if general market.
+        // For 'cric' market, let's keep it same as close?
+        // But `nextDay` is basically a jump.
+        
+        let newPrice = c.price;
+        if (c.market === 'general') {
+            const dailyVol = getVolatilityMultiplier();
+            newPrice = c.price * (1 + dailyVol);
+            if (newPrice < 0.00000001) newPrice = 0.00000001;
+        }
+        // For 'cric', maybe small gap?
+        if (c.market === 'cric') {
+             newPrice = c.price * (1 + (Math.random() * 0.01 - 0.005));
+        }
         
         const basis = (newPrice - c.futuresPrice) / c.futuresPrice;
         const futuresVolatility = (basis * 0.5) + (0.02 * (Math.random() - 0.5));
@@ -336,14 +448,29 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
         dailyHistory: [...state.crdt.dailyHistory, { time: newTime, price: newCrdtPrice }].slice(-30)
       };
 
-      const newIndex = calculateIndex(newCurrencies, 10000);
+      const newIndex = calculateIndex(newCurrencies, 'general', 10000);
       const newIndexHistory = [...state.indexHistory, { time: newTime, price: newIndex }].slice(-144);
       const newIndexDailyHistory = [...state.indexDailyHistory, { time: newTime, price: newIndex }].slice(-30);
+
+      const newCricPrice = calculateIndex(newCurrencies, 'cric', 5000);
+      const newCric = {
+        ...state.cric,
+        price: newCricPrice,
+        dailyOpen: newCricPrice,
+        dailyHigh: newCricPrice,
+        dailyLow: newCricPrice,
+        change24h: 0,
+        priceHistory: [...state.cric.priceHistory, { time: newTime, price: newCricPrice }].slice(-144),
+        dailyHistory: [...state.cric.dailyHistory, { time: newTime, price: newCricPrice }].slice(-30),
+        isOpen: false, // 00:00 is closed
+        orderBook: generateOrderBook(newCricPrice),
+      };
 
       return {
         time: newTime,
         currencies: newCurrencies,
         crdt: newCrdt,
+        cric: newCric,
         index: newIndex,
         dailyOpenIndex: newIndex,
         indexDailyHigh: newIndex,
@@ -353,5 +480,22 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
         indexDailyHistory: newIndexDailyHistory
       };
     });
+  },
+
+  getTopConstituents: () => {
+    const state = get();
+    // Filter for CRIC market currencies
+    const top50 = [...state.currencies]
+        .filter(c => c.market === 'cric')
+        .sort((a, b) => b.volume30d - a.volume30d)
+        .slice(0, 50);
+    const totalWeight = top50.reduce((sum, c) => sum + c.volume30d, 0);
+    
+    return top50.slice(0, 10).map(c => ({
+      id: c.id,
+      name: c.name,
+      symbol: c.symbol,
+      weight: (c.volume30d / totalWeight) * 100
+    }));
   }
 }));

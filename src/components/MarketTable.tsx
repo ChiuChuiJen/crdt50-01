@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useMarketStore } from '../store/marketStore';
 import { ArrowUpRight, ArrowDownRight, Search, Filter } from 'lucide-react';
 
-export const MarketTable: React.FC<{ onSelect: (id: string) => void, marketType: 'spot' | 'futures' }> = ({ onSelect, marketType }) => {
+export const MarketTable: React.FC<{ onSelect: (id: string) => void, marketType: 'spot' | 'futures', spotSubType?: 'general' | 'cric' }> = ({ onSelect, marketType, spotSubType = 'general' }) => {
   const { currencies, language } = useMarketStore();
   const [search, setSearch] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
@@ -22,7 +22,22 @@ export const MarketTable: React.FC<{ onSelect: (id: string) => void, marketType:
   };
 
   const sortedCurrencies = [...currencies]
-    .filter(c => c.name.toLowerCase().includes(search.toLowerCase()) || c.symbol.toLowerCase().includes(search.toLowerCase()))
+    .filter(c => {
+      // Search filter
+      const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase()) || c.symbol.toLowerCase().includes(search.toLowerCase());
+      
+      // Market type filter
+      if (marketType === 'spot') {
+        return matchesSearch && c.market === spotSubType;
+      }
+      
+      // For futures, maybe show all or follow same logic? 
+      // Assuming futures show all for now, or maybe we should also filter futures by market?
+      // User request was specifically "In Spot Market separate into...".
+      // Let's show all for futures for now, or maybe filter by spotSubType if passed?
+      // But spotSubType is only visible when marketType === 'spot'.
+      return matchesSearch;
+    })
     .sort((a, b) => {
       let aValue: any = a[sortConfig.key as keyof typeof a];
       let bValue: any = b[sortConfig.key as keyof typeof b];

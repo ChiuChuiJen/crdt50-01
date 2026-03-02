@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { useMarketStore } from '../store/marketStore';
 import { Play, Pause, FastForward, SkipForward, Moon, Sun, Globe } from 'lucide-react';
+import { APP_VERSION } from '../version';
 
 export const Header: React.FC = () => {
   const { 
@@ -34,8 +35,9 @@ export const Header: React.FC = () => {
   return (
     <header className="flex flex-col md:flex-row justify-between items-center p-4 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors">
       <div className="flex items-center gap-6 mb-4 md:mb-0">
-        <h1 className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 tracking-tight">
+        <h1 className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 tracking-tight flex items-baseline gap-2">
           CR Exchange
+          <span className="text-xs font-mono font-normal text-zinc-400 dark:text-zinc-600">v{APP_VERSION}</span>
         </h1>
       </div>
 

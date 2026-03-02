@@ -197,7 +197,9 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
         
         const recentEvent = newEvents[0];
         if (recentEvent && recentEvent.time === newTime && (recentEvent.event.type === 'B' || recentEvent.targetId === c.id)) {
-          volatility += (Math.random() > 0.5 ? 1 : -1) * (Math.random() * 0.05);
+          // Use the event's impact directly, plus some random variation (80% to 120% of impact)
+          const eventEffect = recentEvent.event.impact * (0.8 + Math.random() * 0.4);
+          volatility += eventEffect;
         }
 
         const changeFromOpen = (c.price - c.dailyOpen) / c.dailyOpen;

@@ -16,7 +16,7 @@ export default function App() {
   const [isIndexModalOpen, setIsIndexModalOpen] = useState(false);
   const [isCrdtModalOpen, setIsCrdtModalOpen] = useState(false);
   const [isCricModalOpen, setIsCricModalOpen] = useState(false);
-  const [marketType, setMarketType] = useState<'spot' | 'futures'>('spot');
+  const [marketType, setMarketType] = useState<'spot' | 'futures' | 'forex'>('spot');
   const [spotSubType, setSpotSubType] = useState<'general' | 'cric'>('general');
   const { theme, language } = useMarketStore();
 
@@ -31,6 +31,7 @@ export default function App() {
   const t = {
     spot: language === 'zh' ? '現貨市場' : 'Spot Market',
     futures: language === 'zh' ? '合約市場' : 'Futures Market',
+    forex: language === 'zh' ? '匯率市場' : 'Exchange Market',
     general: language === 'zh' ? '一般市場' : 'General Market',
     cric: language === 'zh' ? 'CR日盤市場' : 'CR Day Market',
   };
@@ -72,6 +73,16 @@ export default function App() {
                 }`}
               >
                 {t.futures}
+              </button>
+              <button
+                onClick={() => setMarketType('forex')}
+                className={`px-6 py-2 rounded-xl font-medium transition-colors ${
+                  marketType === 'forex'
+                    ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400'
+                    : 'text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
+                }`}
+              >
+                {t.forex}
               </button>
             </div>
 

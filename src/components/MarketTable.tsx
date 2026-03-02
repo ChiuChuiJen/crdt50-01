@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { useMarketStore } from '../store/marketStore';
 import { ArrowUpRight, ArrowDownRight, Search, Filter } from 'lucide-react';
 
-export const MarketTable: React.FC<{ onSelect: (id: string) => void, marketType: 'spot' | 'futures', spotSubType?: 'general' | 'cric' }> = ({ onSelect, marketType, spotSubType = 'general' }) => {
-  const { currencies, language } = useMarketStore();
+export const MarketTable: React.FC<{ onSelect: (id: string) => void, marketType: 'spot' | 'futures' | 'forex', spotSubType?: 'general' | 'cric' }> = ({ onSelect, marketType, spotSubType = 'general' }) => {
+  const { currencies, forexPairs, language } = useMarketStore();
   const [search, setSearch] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
     key: 'volume30d',
@@ -21,8 +21,10 @@ export const MarketTable: React.FC<{ onSelect: (id: string) => void, marketType:
     marketCap: language === 'zh' ? '市值' : 'Market Cap',
   };
 
-  const sortedCurrencies = [...currencies]
-    .filter(c => {
+  const dataList = marketType === 'forex' ? forexPairs : currencies;
+
+  const sortedCurrencies = [...dataList]
+    .filter((c: any) => {
       // Search filter
       const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase()) || c.symbol.toLowerCase().includes(search.toLowerCase());
       
@@ -31,14 +33,9 @@ export const MarketTable: React.FC<{ onSelect: (id: string) => void, marketType:
         return matchesSearch && c.market === spotSubType;
       }
       
-      // For futures, maybe show all or follow same logic? 
-      // Assuming futures show all for now, or maybe we should also filter futures by market?
-      // User request was specifically "In Spot Market separate into...".
-      // Let's show all for futures for now, or maybe filter by spotSubType if passed?
-      // But spotSubType is only visible when marketType === 'spot'.
       return matchesSearch;
     })
-    .sort((a, b) => {
+    .sort((a: any, b: any) => {
       let aValue: any = a[sortConfig.key as keyof typeof a];
       let bValue: any = b[sortConfig.key as keyof typeof b];
 
@@ -48,6 +45,12 @@ export const MarketTable: React.FC<{ onSelect: (id: string) => void, marketType:
         if (sortConfig.key === 'dailyHigh') { aValue = a.futuresDailyHigh; bValue = b.futuresDailyHigh; }
         if (sortConfig.key === 'dailyLow') { aValue = a.futuresDailyLow; bValue = b.futuresDailyLow; }
         if (sortConfig.key === 'volume24h') { aValue = a.futuresVolume24h; bValue = b.futuresVolume24h; }
+      } else if (marketType === 'spot' && spotSubType === 'cric') {
+        if (sortConfig.key === 'price') { aValue = a.cricPrice; bValue = b.cricPrice; }
+        if (sortConfig.key === 'change24h') { aValue = a.cricChange24h; bValue = b.cricChange24h; }
+        if (sortConfig.key === 'dailyHigh') { aValue = a.cricDailyHigh; bValue = b.cricDailyHigh; }
+        if (sortConfig.key === 'dailyLow') { aValue = a.cricDailyLow; bValue = b.cricDailyLow; }
+        if (sortConfig.key === 'volume24h') { aValue = a.cricVolume24h; bValue = b.cricVolume24h; }
       }
       
       if (typeof aValue === 'string') aValue = aValue.toLowerCase();
@@ -66,6 +69,7 @@ export const MarketTable: React.FC<{ onSelect: (id: string) => void, marketType:
   };
 
   const formatNumber = (num: number) => {
+    if (num === undefined) return '-';
     if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
     if (num >= 1e6) return (num / 1e6).toFixed(2) + 'M';
     if (num >= 1e3) return (num / 1e3).toFixed(2) + 'K';
@@ -105,17 +109,35 @@ export const MarketTable: React.FC<{ onSelect: (id: string) => void, marketType:
               <th className="p-4 text-right cursor-pointer hover:text-zinc-900 dark:hover:text-zinc-100" onClick={() => handleSort('change24h')}>{t.change}</th>
               <th className="p-4 text-right hidden md:table-cell cursor-pointer hover:text-zinc-900 dark:hover:text-zinc-100" onClick={() => handleSort('dailyHigh')}>{t.high}</th>
               <th className="p-4 text-right hidden md:table-cell cursor-pointer hover:text-zinc-900 dark:hover:text-zinc-100" onClick={() => handleSort('dailyLow')}>{t.low}</th>
-              <th className="p-4 text-right hidden lg:table-cell cursor-pointer hover:text-zinc-900 dark:hover:text-zinc-100" onClick={() => handleSort('volume24h')}>{t.volume}</th>
-              <th className="p-4 text-right hidden xl:table-cell cursor-pointer hover:text-zinc-900 dark:hover:text-zinc-100" onClick={() => handleSort('marketCap')}>{t.marketCap}</th>
+              {marketType !== 'forex' && (
+                <>
+                  <th className="p-4 text-right hidden lg:table-cell cursor-pointer hover:text-zinc-900 dark:hover:text-zinc-100" onClick={() => handleSort('volume24h')}>{t.volume}</th>
+                  <th className="p-4 text-right hidden xl:table-cell cursor-pointer hover:text-zinc-900 dark:hover:text-zinc-100" onClick={() => handleSort('marketCap')}>{t.marketCap}</th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/50">
-            {sortedCurrencies.map(c => {
-              const price = marketType === 'spot' ? c.price : c.futuresPrice;
-              const change24h = marketType === 'spot' ? c.change24h : c.futuresChange24h;
-              const dailyHigh = marketType === 'spot' ? c.dailyHigh : c.futuresDailyHigh;
-              const dailyLow = marketType === 'spot' ? c.dailyLow : c.futuresDailyLow;
-              const volume24h = marketType === 'spot' ? c.volume24h : c.futuresVolume24h;
+            {sortedCurrencies.map((c: any) => {
+              let price = c.price;
+              let change24h = c.change24h;
+              let dailyHigh = c.dailyHigh;
+              let dailyLow = c.dailyLow;
+              let volume24h = c.volume24h;
+
+              if (marketType === 'futures') {
+                price = c.futuresPrice;
+                change24h = c.futuresChange24h;
+                dailyHigh = c.futuresDailyHigh;
+                dailyLow = c.futuresDailyLow;
+                volume24h = c.futuresVolume24h;
+              } else if (marketType === 'spot' && spotSubType === 'cric') {
+                price = c.cricPrice;
+                change24h = c.cricChange24h;
+                dailyHigh = c.cricDailyHigh;
+                dailyLow = c.cricDailyLow;
+                volume24h = c.cricVolume24h;
+              }
 
               return (
               <tr 
@@ -130,7 +152,7 @@ export const MarketTable: React.FC<{ onSelect: (id: string) => void, marketType:
                     </div>
                     <div>
                       <div className="font-bold text-zinc-900 dark:text-zinc-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                        {c.symbol}/CRDT
+                        {marketType === 'forex' ? c.symbol : `${c.symbol}/CRDT`}
                       </div>
                       <div className="text-xs text-zinc-500 dark:text-zinc-400">{c.name}</div>
                     </div>
@@ -155,12 +177,16 @@ export const MarketTable: React.FC<{ onSelect: (id: string) => void, marketType:
                 <td className="p-4 text-right hidden md:table-cell font-mono text-sm text-zinc-600 dark:text-zinc-400">
                   {formatPrice(dailyLow)}
                 </td>
-                <td className="p-4 text-right hidden lg:table-cell font-mono text-sm text-zinc-600 dark:text-zinc-400">
-                  {formatNumber(volume24h)}
-                </td>
-                <td className="p-4 text-right hidden xl:table-cell font-mono text-sm text-zinc-600 dark:text-zinc-400">
-                  {formatNumber(c.marketCap)}
-                </td>
+                {marketType !== 'forex' && (
+                  <>
+                    <td className="p-4 text-right hidden lg:table-cell font-mono text-sm text-zinc-600 dark:text-zinc-400">
+                      {formatNumber(volume24h)}
+                    </td>
+                    <td className="p-4 text-right hidden xl:table-cell font-mono text-sm text-zinc-600 dark:text-zinc-400">
+                      {formatNumber(c.marketCap)}
+                    </td>
+                  </>
+                )}
               </tr>
             )})}
           </tbody>

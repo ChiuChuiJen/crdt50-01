@@ -20,6 +20,15 @@ export interface CurrencyState extends Currency {
   futuresChange24h: number;
   futuresVolume24h: number;
 
+  cricPrice: number;
+  cricPriceHistory: { time: number; price: number }[];
+  cricDailyHistory: { time: number; price: number }[];
+  cricDailyHigh: number;
+  cricDailyLow: number;
+  cricDailyOpen: number;
+  cricChange24h: number;
+  cricVolume24h: number;
+
   foreign: number; // 外資
   institutional: number; // 法人
   whale: number; // 大戶
@@ -57,10 +66,24 @@ export interface CricState {
   };
 }
 
+export interface ForexPair {
+  id: string;
+  symbol: string;
+  name: string;
+  price: number;
+  change24h: number;
+  dailyHigh: number;
+  dailyLow: number;
+  dailyOpen: number;
+  priceHistory: { time: number; price: number }[];
+  dailyHistory: { time: number; price: number }[];
+}
+
 interface MarketStore {
   currencies: CurrencyState[];
   crdt: CrdtState;
   cric: CricState;
+  forexPairs: ForexPair[];
   index: number;
   dailyOpenIndex: number;
   indexDailyHigh: number;
@@ -136,6 +159,47 @@ const initializeCric = (): CricState => {
   };
 };
 
+const initializeForexPairs = (): ForexPair[] => {
+  const now = Date.now();
+  
+  // CRDT/USD - Pegged ~1.0
+  const crdtUsdPrice = 1.0;
+  const crdtUsdHistory = [{ time: now, price: crdtUsdPrice }];
+  const crdtUsdDaily = generateDailyHistory(crdtUsdPrice, 30).map(h => ({...h, price: 1.0 + (Math.random() * 0.004 - 0.002)}));
+
+  // USD/CRND - ~30.0
+  const usdCrndPrice = 30.0;
+  const usdCrndHistory = [{ time: now, price: usdCrndPrice }];
+  const usdCrndDaily = generateDailyHistory(usdCrndPrice, 30).map(h => ({...h, price: 30.0 + (Math.random() * 0.5 - 0.25)}));
+
+  return [
+    {
+      id: 'crdt-usd',
+      symbol: 'CRDT/USD',
+      name: 'CRDT / US Dollar',
+      price: crdtUsdPrice,
+      change24h: 0,
+      dailyHigh: crdtUsdPrice * 1.002,
+      dailyLow: crdtUsdPrice * 0.998,
+      dailyOpen: crdtUsdPrice,
+      priceHistory: crdtUsdHistory,
+      dailyHistory: crdtUsdDaily,
+    },
+    {
+      id: 'usd-crnd',
+      symbol: 'USD/CRND',
+      name: 'US Dollar / CRND',
+      price: usdCrndPrice,
+      change24h: 0,
+      dailyHigh: usdCrndPrice * 1.01,
+      dailyLow: usdCrndPrice * 0.99,
+      dailyOpen: usdCrndPrice,
+      priceHistory: usdCrndHistory,
+      dailyHistory: usdCrndDaily,
+    }
+  ];
+};
+
 const initializeCurrencies = (): CurrencyState[] => {
   const now = Date.now();
   return initialCurrencies.map(c => {
@@ -144,10 +208,18 @@ const initializeCurrencies = (): CurrencyState[] => {
     const futuresPrice = c.price * (1 + (Math.random() * 0.002 - 0.001));
     const futuresHistory = [{ time: now, price: futuresPrice }];
 
+    // Initialize CRIC price same as spot initially
+    const cricPrice = c.price;
+    const cricHistory = [{ time: now, price: cricPrice }];
+
     const spotDaily = generateDailyHistory(c.price, 30);
     const futuresDaily = spotDaily.map(h => ({
       time: h.time,
       price: h.price * (1 + (Math.random() * 0.004 - 0.002)),
+    }));
+    const cricDaily = spotDaily.map(h => ({
+      time: h.time,
+      price: h.price, // CRIC daily history mirrors spot for simplicity initially
     }));
 
     return {
@@ -168,6 +240,15 @@ const initializeCurrencies = (): CurrencyState[] => {
       futuresDailyOpen: futuresPrice,
       futuresChange24h: 0,
       futuresVolume24h: (c.volume30d / 30) * (1.5 + Math.random()),
+
+      cricPrice: cricPrice,
+      cricPriceHistory: cricHistory,
+      cricDailyHistory: cricDaily,
+      cricDailyHigh: cricPrice * 1.05,
+      cricDailyLow: cricPrice * 0.95,
+      cricDailyOpen: cricPrice,
+      cricChange24h: 0,
+      cricVolume24h: (c.volume30d / 30) * 0.8, // Slightly less volume in day market?
 
       foreign: 20 + Math.random() * 30,
       institutional: 10 + Math.random() * 20,
@@ -191,8 +272,8 @@ const initializeCrdt = (): CrdtState => {
 };
 
 const calculateIndex = (currencies: CurrencyState[], marketFilter: 'general' | 'cric', baseIndex: number = 10000) => {
-  const filtered = currencies.filter(c => c.market === marketFilter);
-  const top50 = [...filtered].sort((a, b) => b.volume30d - a.volume30d).slice(0, 50);
+  // Use all currencies for both indices now
+  const top50 = [...currencies].sort((a, b) => b.volume30d - a.volume30d).slice(0, 50);
   const totalWeight = top50.reduce((sum, c) => sum + c.volume30d, 0);
   
   if (totalWeight === 0) return baseIndex;
@@ -202,7 +283,11 @@ const calculateIndex = (currencies: CurrencyState[], marketFilter: 'general' | '
     const weight = c.volume30d / totalWeight;
     const initialCurrency = initialCurrencies.find(ic => ic.id === c.id);
     const initialPrice = initialCurrency ? initialCurrency.price : c.dailyOpen;
-    const ratio = c.price / initialPrice;
+    
+    // Use cricPrice for CRIC index, regular price for General index
+    const currentPrice = marketFilter === 'cric' ? c.cricPrice : c.price;
+    
+    const ratio = currentPrice / initialPrice;
     indexRatio += ratio * weight;
   });
   
@@ -213,6 +298,7 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
   currencies: initializeCurrencies(),
   crdt: initializeCrdt(),
   cric: initializeCric(),
+  forexPairs: initializeForexPairs(),
   index: 10000,
   dailyOpenIndex: 10000,
   indexDailyHigh: 10000,
@@ -259,16 +345,6 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
       }
 
       const newCurrencies = state.currencies.map(c => {
-        // Skip update if it's a CRIC currency and market is closed
-        if (c.market === 'cric' && !isCricOpen) {
-           return {
-             ...c,
-             priceHistory: [...c.priceHistory, { time: newTime, price: c.price }].slice(-144),
-             // Don't update daily history if closed? Or just append same price?
-             // Usually charts show flat line or gap. Let's append same price.
-           };
-        }
-
         let volatility = getVolatilityMultiplier() / 144;
         
         const recentEvent = newEvents[0];
@@ -293,6 +369,16 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
         const newFuturesHistory = [...c.futuresPriceHistory, { time: newTime, price: newFuturesPrice }];
         if (newFuturesHistory.length > 144) newFuturesHistory.shift();
 
+        // CRIC Price Logic
+        let newCricPrice = c.cricPrice;
+        if (isCricOpen) {
+            const gap = newPrice - c.cricPrice;
+            const move = gap * 0.8 + (c.cricPrice * (Math.random() * 0.002 - 0.001));
+            newCricPrice = c.cricPrice + move;
+        }
+        const newCricHistory = [...c.cricPriceHistory, { time: newTime, price: newCricPrice }];
+        if (newCricHistory.length > 144) newCricHistory.shift();
+
         return {
           ...c,
           price: newPrice,
@@ -310,6 +396,14 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
           futuresDailyHigh: isNewDay ? newFuturesPrice : Math.max(c.futuresDailyHigh, newFuturesPrice),
           futuresDailyLow: isNewDay ? newFuturesPrice : Math.min(c.futuresDailyLow, newFuturesPrice),
           futuresChange24h: isNewDay ? 0 : ((newFuturesPrice - c.futuresDailyOpen) / c.futuresDailyOpen) * 100,
+
+          cricPrice: newCricPrice,
+          cricPriceHistory: newCricHistory,
+          cricDailyHistory: isNewDay ? [...c.cricDailyHistory, { time: newTime, price: newCricPrice }].slice(-30) : c.cricDailyHistory,
+          cricDailyOpen: isNewDay ? newCricPrice : c.cricDailyOpen,
+          cricDailyHigh: isNewDay ? newCricPrice : (isCricOpen ? Math.max(c.cricDailyHigh, newCricPrice) : c.cricDailyHigh),
+          cricDailyLow: isNewDay ? newCricPrice : (isCricOpen ? Math.min(c.cricDailyLow, newCricPrice) : c.cricDailyLow),
+          cricChange24h: isNewDay ? 0 : ((newCricPrice - c.cricDailyOpen) / c.cricDailyOpen) * 100,
         };
       });
 
@@ -336,6 +430,44 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
         change24h: isNewDay ? 0 : ((newCrdtPrice - state.crdt.dailyOpen) / state.crdt.dailyOpen) * 100,
       };
 
+      // Simulate Forex Pairs
+      const newForexPairs = state.forexPairs.map(pair => {
+        let volatility = 0;
+        if (pair.id === 'crdt-usd') {
+          // CRDT/USD - Pegged ~1.0, very low volatility
+          volatility = (Math.random() * 0.0002 - 0.0001);
+        } else if (pair.id === 'usd-crnd') {
+          // USD/CRND - ~30.0, moderate volatility
+          volatility = (Math.random() * 0.001 - 0.0005);
+        }
+
+        let newPrice = pair.price * (1 + volatility);
+        
+        // Keep pegged/range bound
+        if (pair.id === 'crdt-usd') {
+           if (newPrice > 1.005) newPrice = 1.005;
+           if (newPrice < 0.995) newPrice = 0.995;
+        } else if (pair.id === 'usd-crnd') {
+           // Maybe drift a bit but stay around 30
+           if (newPrice > 32) newPrice = 32;
+           if (newPrice < 28) newPrice = 28;
+        }
+
+        const newHistory = [...pair.priceHistory, { time: newTime, price: newPrice }];
+        if (newHistory.length > 144) newHistory.shift();
+
+        return {
+          ...pair,
+          price: newPrice,
+          priceHistory: newHistory,
+          dailyHistory: isNewDay ? [...pair.dailyHistory, { time: newTime, price: newPrice }].slice(-30) : pair.dailyHistory,
+          dailyOpen: isNewDay ? newPrice : pair.dailyOpen,
+          dailyHigh: isNewDay ? newPrice : Math.max(pair.dailyHigh, newPrice),
+          dailyLow: isNewDay ? newPrice : Math.min(pair.dailyLow, newPrice),
+          change24h: isNewDay ? 0 : ((newPrice - pair.dailyOpen) / pair.dailyOpen) * 100,
+        };
+      });
+
       // Calculate Indices
       const newIndex = calculateIndex(newCurrencies, 'general', 10000);
       const newIndexHistory = [...state.indexHistory, { time: newTime, price: newIndex }];
@@ -344,25 +476,24 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
       const newIndexDailyHistory = isNewDay ? [...state.indexDailyHistory, { time: newTime, price: newIndex }].slice(-30) : state.indexDailyHistory;
 
       // CRIC Index Calculation
-      // Use 5000 as base for CRIC
-      const newCricPrice = calculateIndex(newCurrencies, 'cric', 5000);
-      const newCricHistory = [...state.cric.priceHistory, { time: newTime, price: newCricPrice }];
-      if (newCricHistory.length > 144) newCricHistory.shift();
+      const newCricIndexPrice = calculateIndex(newCurrencies, 'cric', 5000);
+      const newCricIndexHistory = [...state.cric.priceHistory, { time: newTime, price: newCricIndexPrice }];
+      if (newCricIndexHistory.length > 144) newCricIndexHistory.shift();
       
       let newOrderBook = state.cric.orderBook;
       if (isCricOpen) {
-         newOrderBook = generateOrderBook(newCricPrice);
+         newOrderBook = generateOrderBook(newCricIndexPrice);
       }
 
-      const newCric = {
+      const newCricIndex = {
         ...state.cric,
-        price: newCricPrice,
-        priceHistory: newCricHistory,
-        dailyHistory: isNewDay ? [...state.cric.dailyHistory, { time: newTime, price: newCricPrice }].slice(-30) : state.cric.dailyHistory,
-        dailyOpen: isNewDay ? newCricPrice : state.cric.dailyOpen,
-        dailyHigh: isNewDay ? newCricPrice : (isCricOpen ? Math.max(state.cric.dailyHigh, newCricPrice) : state.cric.dailyHigh),
-        dailyLow: isNewDay ? newCricPrice : (isCricOpen ? Math.min(state.cric.dailyLow, newCricPrice) : state.cric.dailyLow),
-        change24h: isNewDay ? 0 : ((newCricPrice - state.cric.dailyOpen) / state.cric.dailyOpen) * 100,
+        price: newCricIndexPrice,
+        priceHistory: newCricIndexHistory,
+        dailyHistory: isNewDay ? [...state.cric.dailyHistory, { time: newTime, price: newCricIndexPrice }].slice(-30) : state.cric.dailyHistory,
+        dailyOpen: isNewDay ? newCricIndexPrice : state.cric.dailyOpen,
+        dailyHigh: isNewDay ? newCricIndexPrice : (isCricOpen ? Math.max(state.cric.dailyHigh, newCricIndexPrice) : state.cric.dailyHigh),
+        dailyLow: isNewDay ? newCricIndexPrice : (isCricOpen ? Math.min(state.cric.dailyLow, newCricIndexPrice) : state.cric.dailyLow),
+        change24h: isNewDay ? 0 : ((newCricIndexPrice - state.cric.dailyOpen) / state.cric.dailyOpen) * 100,
         isOpen: isCricOpen,
         orderBook: newOrderBook,
       };
@@ -371,7 +502,8 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
         time: newTime,
         currencies: newCurrencies,
         crdt: newCrdt,
-        cric: newCric,
+        cric: newCricIndex,
+        forexPairs: newForexPairs,
         activeEvents: newEvents,
         index: newIndex,
         dailyOpenIndex: newDailyOpenIndex,
@@ -392,26 +524,18 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
       const newTime = nextDate.getTime();
       
       const newCurrencies = state.currencies.map(c => {
-        // If CRIC closed, price doesn't change overnight? 
-        // Or maybe gap open?
-        // Let's assume day starts with same price for simplicity, or apply volatility if general market.
-        // For 'cric' market, let's keep it same as close?
-        // But `nextDay` is basically a jump.
-        
-        let newPrice = c.price;
-        if (c.market === 'general') {
-            const dailyVol = getVolatilityMultiplier();
-            newPrice = c.price * (1 + dailyVol);
-            if (newPrice < 0.00000001) newPrice = 0.00000001;
-        }
-        // For 'cric', maybe small gap?
-        if (c.market === 'cric') {
-             newPrice = c.price * (1 + (Math.random() * 0.01 - 0.005));
-        }
+        const dailyVol = getVolatilityMultiplier();
+        let newPrice = c.price * (1 + dailyVol);
+        if (newPrice < 0.00000001) newPrice = 0.00000001;
         
         const basis = (newPrice - c.futuresPrice) / c.futuresPrice;
         const futuresVolatility = (basis * 0.5) + (0.02 * (Math.random() - 0.5));
         const newFuturesPrice = c.futuresPrice * (1 + futuresVolatility);
+
+        // CRIC gap open logic
+        const overnightMove = (newPrice - c.price) / c.price;
+        const cricGap = overnightMove * 0.5;
+        const newCricPrice = c.cricPrice * (1 + cricGap);
 
         return {
           ...c,
@@ -430,6 +554,14 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
           futuresChange24h: 0,
           futuresPriceHistory: [...c.futuresPriceHistory, { time: newTime, price: newFuturesPrice }].slice(-144),
           futuresDailyHistory: [...c.futuresDailyHistory, { time: newTime, price: newFuturesPrice }].slice(-30),
+
+          cricPrice: newCricPrice,
+          cricDailyOpen: newCricPrice,
+          cricDailyHigh: newCricPrice,
+          cricDailyLow: newCricPrice,
+          cricChange24h: 0,
+          cricPriceHistory: [...c.cricPriceHistory, { time: newTime, price: newCricPrice }].slice(-144),
+          cricDailyHistory: [...c.cricDailyHistory, { time: newTime, price: newCricPrice }].slice(-30),
         };
       });
 
@@ -448,29 +580,54 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
         dailyHistory: [...state.crdt.dailyHistory, { time: newTime, price: newCrdtPrice }].slice(-30)
       };
 
+      const newForexPairs = state.forexPairs.map(pair => {
+        let volatility = 0;
+        if (pair.id === 'crdt-usd') volatility = (Math.random() * 0.001 - 0.0005);
+        if (pair.id === 'usd-crnd') volatility = (Math.random() * 0.005 - 0.0025);
+        
+        let newPrice = pair.price * (1 + volatility);
+        
+        if (pair.id === 'crdt-usd') {
+           if (newPrice > 1.005) newPrice = 1.005;
+           if (newPrice < 0.995) newPrice = 0.995;
+        }
+
+        return {
+          ...pair,
+          price: newPrice,
+          dailyOpen: newPrice,
+          dailyHigh: newPrice,
+          dailyLow: newPrice,
+          change24h: 0,
+          priceHistory: [...pair.priceHistory, { time: newTime, price: newPrice }].slice(-144),
+          dailyHistory: [...pair.dailyHistory, { time: newTime, price: newPrice }].slice(-30),
+        };
+      });
+
       const newIndex = calculateIndex(newCurrencies, 'general', 10000);
       const newIndexHistory = [...state.indexHistory, { time: newTime, price: newIndex }].slice(-144);
       const newIndexDailyHistory = [...state.indexDailyHistory, { time: newTime, price: newIndex }].slice(-30);
 
-      const newCricPrice = calculateIndex(newCurrencies, 'cric', 5000);
-      const newCric = {
+      const newCricIndexPrice = calculateIndex(newCurrencies, 'cric', 5000);
+      const newCricIndex = {
         ...state.cric,
-        price: newCricPrice,
-        dailyOpen: newCricPrice,
-        dailyHigh: newCricPrice,
-        dailyLow: newCricPrice,
+        price: newCricIndexPrice,
+        dailyOpen: newCricIndexPrice,
+        dailyHigh: newCricIndexPrice,
+        dailyLow: newCricIndexPrice,
         change24h: 0,
-        priceHistory: [...state.cric.priceHistory, { time: newTime, price: newCricPrice }].slice(-144),
-        dailyHistory: [...state.cric.dailyHistory, { time: newTime, price: newCricPrice }].slice(-30),
+        priceHistory: [...state.cric.priceHistory, { time: newTime, price: newCricIndexPrice }].slice(-144),
+        dailyHistory: [...state.cric.dailyHistory, { time: newTime, price: newCricIndexPrice }].slice(-30),
         isOpen: false, // 00:00 is closed
-        orderBook: generateOrderBook(newCricPrice),
+        orderBook: generateOrderBook(newCricIndexPrice),
       };
 
       return {
         time: newTime,
         currencies: newCurrencies,
         crdt: newCrdt,
-        cric: newCric,
+        cric: newCricIndex,
+        forexPairs: newForexPairs,
         index: newIndex,
         dailyOpenIndex: newIndex,
         indexDailyHigh: newIndex,
@@ -484,9 +641,8 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
 
   getTopConstituents: () => {
     const state = get();
-    // Filter for CRIC market currencies
+    // Use all currencies
     const top50 = [...state.currencies]
-        .filter(c => c.market === 'cric')
         .sort((a, b) => b.volume30d - a.volume30d)
         .slice(0, 50);
     const totalWeight = top50.reduce((sum, c) => sum + c.volume30d, 0);
